@@ -19,18 +19,48 @@ namespace Live_View_Test
         Live_View_Control.Camera current_Camera;
         Live_View_Control.FormatDetails current_Format;
         Live_View_Control.ResolutionFPS current_Resolution;
-
+        Form_Settings settings_Form;
         private ToolStripMenuItem selectedCameraMenuItem; // Track the currently selected item
         private ToolStripMenuItem selectedFormatMenuItem; // Track the currently selected item
         private ToolStripMenuItem selectedResolutionMenuItem; // Track the currently selected item
+
+        private int focus_Value;
+        public int Focus_Value
+        {
+            get { return focus_Value; }
+            set { focus_Value = value; }
+        }
+
+        private int exposure_Value;
+        public int Exposure_Value
+        {
+            get { return exposure_Value; }
+            set { exposure_Value = value; }
+        }
+
         public Form1()
         {
             InitializeComponent();
+            settings_Form = new Form_Settings();
+            settings_Form.FocusChanged += Settings_Form_FocusChanged;
+            settings_Form.ExposureChanged += Settings_Form_ExposureChanged;
+        }
+
+        private void Settings_Form_ExposureChanged(object sender, ExposureChangedEventArgs e)
+        {
+            var flags = e.Mode;
+            live_View_Control.SetExposure(e.ExposureValue, flags);
+        }
+
+        private void Settings_Form_FocusChanged(object sender, FocusChangedEventArgs e)
+        {
+            var flags = e.Mode;
+            live_View_Control.SetFocus(e.FocusValue, flags);
         }
 
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
-            
+            live_View_Control.StopLiveFeed();
         }
 
         private void Form1_Load(object sender, EventArgs e)
@@ -59,7 +89,7 @@ namespace Live_View_Test
                 // Check the first video device by default
                 var firstCameraItem = cameraToolStripMenuItem.DropDownItems[0] as ToolStripMenuItem;
                 SelectCamera(firstCameraItem);
-
+                settingsToolStripMenuItem.Enabled = true;
 
             }
         }
@@ -78,6 +108,7 @@ namespace Live_View_Test
 
             // Get the device from the Tag
             current_Camera = (Live_View_Control.Camera)menuItem.Tag;
+
 
 
             //-----------------------------//
@@ -161,7 +192,31 @@ namespace Live_View_Test
             int height = current_Resolution.Height;
             int fps = current_Resolution.FPS;
 
+            panel_live.Size = new Size(width,height);
             live_View_Control.StartLiveFeed(current_Camera, format, width, height, fps, panel_live);
+            this.Size = new Size(width, height + 30);
+
+            // Set the ranges in the control form after starting the live feed
+            // Retrieve the focus and exposure ranges
+            var focusRange = live_View_Control.GetControlRange(CustomCameraControlProperty.Focus);
+            var exposureRange = live_View_Control.GetControlRange(CustomCameraControlProperty.Exposure);
+
+            // Pass these ranges to the control form's SetControlRanges method
+            settings_Form.SetControlRanges(focusRange, exposureRange);
+
+        }
+
+        private void Form1_Resize(object sender, EventArgs e)
+        {
+            // Set the panel to fill the form with a margin or fully occupy the form
+            int margin = 10; // Adjust as needed for any border space
+            panel_live.SetBounds(margin, margin, this.ClientSize.Width - 2 * margin, this.ClientSize.Height - 2 * margin);
+        }
+
+        private void settingsToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            
+            settings_Form.Show();
         }
     }
 }

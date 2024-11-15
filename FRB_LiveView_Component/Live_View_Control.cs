@@ -12,6 +12,7 @@ using System.Runtime.InteropServices;
 
 namespace FRB_LiveView_Component
 {
+
     public partial class Live_View_Control: UserControl
     {
 
@@ -19,12 +20,12 @@ namespace FRB_LiveView_Component
         private IVideoWindow videoWindow;
         private IMediaControl mediaControl;
         private IAMStreamConfig streamConfig;
-        private IAMCameraControl _cameraControl;
+        private IAMCameraControl cameraControl;
         public Live_View_Control()
         {
             InitializeComponent();
         }
-
+        
         public struct Camera
         {
             public string Name;
@@ -83,6 +84,8 @@ namespace FRB_LiveView_Component
             IFilterGraph2 filterGraph = (IFilterGraph2)new FilterGraph();
             IBaseFilter cameraFilter = CreateFilterFromDevice(device);
             filterGraph.AddFilter(cameraFilter, "Video Capture");
+
+
 
             IPin capturePin = DsFindPin.ByCategory(cameraFilter, PinCategory.Capture, 0);
             IAMStreamConfig streamConfig = capturePin as IAMStreamConfig;
@@ -152,6 +155,7 @@ namespace FRB_LiveView_Component
         {
             try
             {
+                
                 StopLiveFeed(); // Stop any existing video feed
                 filterGraph = (IFilterGraph2)new FilterGraph();
 
@@ -159,6 +163,14 @@ namespace FRB_LiveView_Component
                 DsDevice selectedDevice = FindDeviceByPath(camera.Path);
                 IBaseFilter cameraFilter = CreateFilterFromDevice(selectedDevice);
                 filterGraph.AddFilter(cameraFilter, "Video Capture");
+
+
+                // Initialize IAMCameraControl interface for focus and exposure
+                cameraControl = cameraFilter as IAMCameraControl;
+                if (cameraControl == null)
+                {
+                    MessageBox.Show("IAMCameraControl interface not supported by this device.");
+                }
 
                 // Get the capture pin and IAMStreamConfig interface to set the format
                 IPin capturePin = DsFindPin.ByCategory(cameraFilter, PinCategory.Capture, 0);
@@ -176,16 +188,25 @@ namespace FRB_LiveView_Component
                 // Render the video stream to the external display panel
                 filterGraph.Render(capturePin);
 
-                // Configure the video window to show in the specified display panel
-                videoWindow = filterGraph as IVideoWindow;
-                videoWindow.put_Owner(displayPanel.Handle);
-                videoWindow.put_WindowStyle(WindowStyle.Child | WindowStyle.ClipSiblings);
-                videoWindow.SetWindowPosition(0, 0, displayPanel.Width, displayPanel.Height);
-                videoWindow.put_Visible(OABool.True);
+                // Use Invoke to ensure UI updates run on the UI thread
+                displayPanel.Invoke((MethodInvoker)delegate
+                {
+                    // Configure the video window to show in the specified display panel
+                    videoWindow = filterGraph as IVideoWindow;
+                    videoWindow.put_Owner(displayPanel.Handle);
+                    videoWindow.put_WindowStyle(WindowStyle.Child | WindowStyle.ClipSiblings);
+                    // Set up size synchronization by handling displayPanel's SizeChanged event
+                    displayPanel.SizeChanged += (sender, e) =>
+                    {
+                        videoWindow.SetWindowPosition(0, 0, displayPanel.Width, displayPanel.Height);
+                        videoWindow.put_Visible(OABool.True);
+                    };
+                    // Start the graph to begin video feed
+                    mediaControl = filterGraph as IMediaControl;
+                    mediaControl.Run();
+                });
 
-                // Start the graph to begin video feed
-                mediaControl = filterGraph as IMediaControl;
-                mediaControl.Run();
+
             }
             catch (Exception ex)
             {
@@ -242,6 +263,53 @@ namespace FRB_LiveView_Component
             throw new Exception("Camera device not found.");
         }
 
+        // Method to get range of focus or exposure control
+        public (int min, int max, int step, int defaultValue) GetControlRange(CustomCameraControlProperty property)
+        {
+            CameraControlProperty controlProperty = ConvertToDirectShowProperties(property);
+            CameraControlFlags flags;
+            int min, max, step, defaultValue;
+            if (cameraControl != null)
+            {
+                int hr = cameraControl.GetRange(controlProperty, out min, out max, out step, out defaultValue, out flags);
+                if (hr == 0)
+                {
+                    return (min, max, step, defaultValue);
+                }
+                else
+                {
+                    throw new Exception("Failed to get control range.");
+                }
+            }
+            throw new NotSupportedException("Camera control not supported.");
+        }
+
+
+        // This is the public method exposed by your component
+        public void SetFocus(int focusValue, CustomCameraControlFlags mode)
+        {
+            // Convert to DirectShow CameraControlFlags internally
+            CameraControlFlags directShowMode = ConvertToDirectShowFlags(mode);
+            cameraControl.Set(CameraControlProperty.Focus, focusValue, directShowMode);
+        }
+
+        public void SetExposure(int exposureValue, CustomCameraControlFlags mode)
+        {
+            // Convert to DirectShow CameraControlFlags internally
+            CameraControlFlags directShowMode = ConvertToDirectShowFlags(mode);
+            cameraControl.Set(CameraControlProperty.Exposure, exposureValue, directShowMode);
+        }
+
+
+        private CameraControlFlags ConvertToDirectShowFlags(CustomCameraControlFlags customMode)
+        {
+            return customMode == CustomCameraControlFlags.Manual ? CameraControlFlags.Manual : CameraControlFlags.Auto;
+        }        
+        private CameraControlProperty ConvertToDirectShowProperties(CustomCameraControlProperty customMode)
+        {
+            return customMode == CustomCameraControlProperty.Focus ? CameraControlProperty.Focus : CameraControlProperty.Exposure;
+        }
+
         // Method to stop the live video feed
         public void StopLiveFeed()
         {
@@ -265,6 +333,40 @@ namespace FRB_LiveView_Component
         {
             device.Mon.BindToObject(null, null, typeof(IBaseFilter).GUID, out object source);
             return (IBaseFilter)source;
+        }
+    }
+
+    public enum CustomCameraControlFlags
+    {
+        Auto,
+        Manual
+    }
+    public enum CustomCameraControlProperty
+    {
+        Focus,
+        Exposure
+    }
+    public class FocusChangedEventArgs : EventArgs
+    {
+        public int FocusValue { get; }
+        public CustomCameraControlFlags Mode { get; }
+
+        public FocusChangedEventArgs(int focusValue, CustomCameraControlFlags mode)
+        {
+            FocusValue = focusValue;
+            Mode = mode;
+        }
+    }
+
+    public class ExposureChangedEventArgs : EventArgs
+    {
+        public int ExposureValue { get; }
+        public CustomCameraControlFlags Mode { get; }
+
+        public ExposureChangedEventArgs(int exposureValue, CustomCameraControlFlags mode)
+        {
+            ExposureValue = exposureValue;
+            Mode = mode;
         }
     }
 }
